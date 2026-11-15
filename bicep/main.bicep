@@ -261,6 +261,19 @@ resource appGateway 'Microsoft.Network/applicationGateways@2024-05-01' = {
         }
       }
     ] : []
+    redirectConfigurations: hasSslCert ? [
+      {
+        name: 'http-to-https-redirect'
+        properties: {
+          redirectType: 'Permanent'
+          targetListener: {
+            id: resourceId('Microsoft.Network/applicationGateways/httpListeners', 'agw-${projectName}', 'https-basic')
+          }
+          includePath: true
+          includeQueryString: true
+        }
+      }
+    ] : []
     probes: [
       {
         name: 'cert-probe'
@@ -361,13 +374,7 @@ resource appGateway 'Microsoft.Network/applicationGateways@2024-05-01' = {
     urlPathMaps: [
       {
         name: 'http-default'
-        properties: {
-          defaultBackendAddressPool: {
-            id: resourceId('Microsoft.Network/applicationGateways/backendAddressPools', 'agw-${projectName}', 'web-app')
-          }
-          defaultBackendHttpSettings: {
-            id: resourceId('Microsoft.Network/applicationGateways/backendHttpSettingsCollection', 'agw-${projectName}', 'web-app-settings')
-          }
+        properties: union({
           pathRules: [
             {
               name: 'pki-check'
@@ -384,7 +391,18 @@ resource appGateway 'Microsoft.Network/applicationGateways@2024-05-01' = {
               }
             }
           ]
-        }
+        }, hasSslCert ? {
+          defaultRedirectConfiguration: {
+            id: resourceId('Microsoft.Network/applicationGateways/redirectConfigurations', 'agw-${projectName}', 'http-to-https-redirect')
+          }
+        } : {
+          defaultBackendAddressPool: {
+            id: resourceId('Microsoft.Network/applicationGateways/backendAddressPools', 'agw-${projectName}', 'web-app')
+          }
+          defaultBackendHttpSettings: {
+            id: resourceId('Microsoft.Network/applicationGateways/backendHttpSettingsCollection', 'agw-${projectName}', 'web-app-settings')
+          }
+        })
       }
     ]
     requestRoutingRules: concat([
