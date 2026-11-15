@@ -95,7 +95,7 @@ az storage blob upload `
     --file $OutputFile `
     --content-type 'text/html' `
     --overwrite `
-    --auth-mode key `
+    --auth-mode login `
     --output none
 
 Write-Host "Uploaded $OutputFile to storage account '$StorageAccountName' (`$web container)." -ForegroundColor Green
