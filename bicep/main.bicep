@@ -24,10 +24,7 @@ param customDomainName string = 'cert-test.peterwynroberts.com'
 param certManagementSpnObjectId string = 'ea9f3de1-5e71-48f6-8f96-f3312841e295'
 
 @description('Name of the certificate secret in Key Vault to bind to the HTTPS listener on Application Gateway. Leave empty initially if the certificate has not yet been issued.')
-param sslCertificateSecretName string = 'certagwcert1b95d780-db76-460f-a90b-845cf261c2fa'
-
-@description('Whether to deploy the App Service Certificate Order.')
-param deployCertificateOrder bool = true
+param sslCertificateSecretName string = ''
 
 @description('Optional explicit FQDN for the static website. Defaults to the storage account web endpoint pattern.')
 param staticSiteFqdn string = ''
@@ -46,7 +43,7 @@ var hasSslCert = !empty(sslCertificateSecretName)
 // Resources
 // ============================================================================
 
-// 1. Virtual network: Subnet for Application Gateway
+// Virtual Network: Subnet for Application Gateway
 resource virtualNetwork 'Microsoft.Network/virtualNetworks@2024-05-01' = {
   name: 'vnet-${projectName}'
   location: location
@@ -67,36 +64,7 @@ resource agwSubnet 'Microsoft.Network/virtualNetworks/subnets@2024-05-01' = {
   }
 }
 
-// 2. Storage Account for Static Website (PKI Validation)
-resource storageAccount 'Microsoft.Storage/storageAccounts@2023-05-01' = {
-  name: storageAccountName
-  location: location
-  kind: 'StorageV2'
-  sku: {
-    name: 'Standard_LRS'
-  }
-  properties: {
-    accessTier: 'Hot'
-    supportsHttpsTrafficOnly: true
-    minimumTlsVersion: 'TLS1_2'
-    allowBlobPublicAccess: true
-  }
-}
-
-resource blobService 'Microsoft.Storage/storageAccounts/blobServices@2023-05-01' = {
-  parent: storageAccount
-  name: 'default'
-}
-
-resource webContainer 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-05-01' = {
-  parent: blobService
-  name: '$web'
-  properties: {
-    publicAccess: 'Blob'
-  }
-}
-
-// 3. Website (Backend Web App)
+// Website (Backend Web App)
 resource appServicePlan 'Microsoft.Web/serverfarms@2024-04-01' = {
   name: 'asp-${projectName}'
   location: location
@@ -104,7 +72,6 @@ resource appServicePlan 'Microsoft.Web/serverfarms@2024-04-01' = {
     name: 'F1'
   }
   kind: 'linux'
-  
   properties: {
     reserved: true
   }
@@ -124,14 +91,13 @@ module site 'br/public:avm/res/web/site:0.24.0' = {
         }
       ]
       ftpsState: 'FtpsOnly'
-      // linuxFxVersion: 'DOCKER|mcr.microsoft.com/appsvc/staticsite:latest'
-      
+      linuxFxVersion: 'DOCKER|mcr.microsoft.com/appsvc/staticsite:latest'
       minTlsVersion: '1.2'
     }
   }
 }
 
-// 4. Key Vault
+// Key Vault
 resource keyVault 'Microsoft.KeyVault/vaults@2023-07-01' = {
   name: 'kv-${projectName}'
   location: location
@@ -145,7 +111,7 @@ resource keyVault 'Microsoft.KeyVault/vaults@2023-07-01' = {
   }
 }
 
-// 5. Allow cert registration permission to use Key Vault
+// Allow cert registration permission to use Key Vault
 resource certRegistrationRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   name: guid(resourceGroup().id, certManagementSpnObjectId, keyVaultSecretsOfficerRoleId)
   properties: {
@@ -156,13 +122,13 @@ resource certRegistrationRoleAssignment 'Microsoft.Authorization/roleAssignments
   scope: keyVault
 }
 
-// 6. User-Assigned Managed Identity for Application Gateway
+// User-Assigned Managed Identity for Application Gateway
 resource managedIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
   name: 'id-${projectName}'
   location: location
 }
 
-// 7. Grant the Managed Identity permissions to read secrets from Key Vault
+// Grant the Managed Identity permissions to read secrets from Key Vault
 resource agwManagedIdentityRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   name: guid(resourceGroup().id, managedIdentity.id, keyVaultSecretsUserRoleId)
   properties: {
@@ -173,7 +139,7 @@ resource agwManagedIdentityRoleAssignment 'Microsoft.Authorization/roleAssignmen
   scope: keyVault
 }
 
-// 8. Public IP for Application Gateway
+// Public IP for Application Gateway
 resource publicIP 'Microsoft.Network/publicIPAddresses@2024-05-01' = {
   name: 'pip-agw-${projectName}'
   location: location
@@ -190,7 +156,47 @@ resource publicIP 'Microsoft.Network/publicIPAddresses@2024-05-01' = {
   }
 }
 
-// 9. Application Gateway
+// App Service Certificate Order & Key Vault Binding
+resource certificateOrder 'Microsoft.CertificateRegistration/certificateOrders@2022-09-01' = {
+  name: certificateOrderName
+  location: 'global'
+  properties: {
+    distinguishedName: 'CN=${customDomainName}'
+    autoRenew: true
+    productType: 'StandardDomainValidatedSsl'
+    validityInYears: 1
+    keySize: 2048
+  }
+  dependsOn: [
+    certRegistrationRoleAssignment
+  ]
+}
+
+resource certificateOrderCert 'Microsoft.CertificateRegistration/certificateOrders/certificates@2022-09-01' = {
+  parent: certificateOrder
+  name: certificateOrderName
+  location: 'global'
+  properties: {
+    keyVaultId: keyVault.id
+    keyVaultSecretName: certificateOrderName
+  }
+  dependsOn: [
+    certRegistrationRoleAssignment
+  ]
+}
+
+// PKI Static Site Storage Account
+module storageSite 'modules/pki-static-site.bicep' = {
+  name: 'storageSiteDeployment'
+  params: {
+    location: location
+    accountName: storageAccountName
+    skuName: 'Standard_LRS'
+    verificationToken: certificateOrder.properties.domainVerificationToken
+  }
+}
+
+// Application Gateway
 resource appGateway 'Microsoft.Network/applicationGateways@2024-05-01' = {
   name: 'agw-${projectName}'
   location: location
@@ -416,35 +422,7 @@ resource appGateway 'Microsoft.Network/applicationGateways@2024-05-01' = {
   }
   dependsOn: [
     agwManagedIdentityRoleAssignment
-  ]
-}
-
-// 10. App Service Certificate Order & Key Vault Binding
-resource certificateOrder 'Microsoft.CertificateRegistration/certificateOrders@2022-09-01' = if (deployCertificateOrder && !empty(customDomainName)) {
-  name: certificateOrderName
-  location: 'global'
-  properties: {
-    distinguishedName: 'CN=${customDomainName}'
-    autoRenew: true
-    productType: 'StandardDomainValidatedSsl'
-    validityInYears: 1
-    keySize: 2048
-  }
-  dependsOn: [
-    certRegistrationRoleAssignment
-  ]
-}
-
-resource certificateOrderCert 'Microsoft.CertificateRegistration/certificateOrders/certificates@2022-09-01' = if (deployCertificateOrder && !empty(customDomainName)) {
-  parent: certificateOrder
-  name: certificateOrderName
-  location: 'global'
-  properties: {
-    keyVaultId: keyVault.id
-    keyVaultSecretName: certificateOrderName
-  }
-  dependsOn: [
-    certRegistrationRoleAssignment
+    storageSite
   ]
 }
 
@@ -454,7 +432,9 @@ resource certificateOrderCert 'Microsoft.CertificateRegistration/certificateOrde
 
 output appGatewayName string = appGateway.name
 output webAppDefaultHostName string = site.outputs.defaultHostname
-output storageAccountName string = storageAccount.name
+output storageAccountName string = storageSite.outputs.storageAccountName
 output keyVaultName string = keyVault.name
 output managedIdentityPrincipalId string = managedIdentity.properties.principalId
-output domainVerificationToken string = (deployCertificateOrder && !empty(customDomainName)) ? certificateOrder.?properties.domainVerificationToken ?? '' : ''
+output domainVerificationToken string = certificateOrder.properties.domainVerificationToken
+output keyVaultSecretName string = certificateOrderName
+output ipAddress string = publicIP.properties.ipAddress
