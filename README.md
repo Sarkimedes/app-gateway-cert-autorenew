@@ -2,6 +2,8 @@
 
 Demonstrates how to use an **Azure App Service Certificate** on an **Azure Application Gateway**, using a **Storage Account static website** to serve the HTML file required for Certificate Authority (GoDaddy) PKI domain validation.
 
+See https://peterwynroberts.com/azure/2026/11/15/Using-App-Service-Certs-In-App-Gateway-with-HTML-Challenge.html for a more in-depth post about this.
+
 ---
 
 ## Architecture & Resources
@@ -42,9 +44,8 @@ To issue an App Service Certificate without DNS TXT records, GoDaddy (the Certif
 
 ## Deployment Steps
 
-The deployment workflow is split into **2 scripts** covering **3 steps**:
 
-### Step 1: Initial Infrastructure Deployment (`deploy.ps1`)
+### Initial Infrastructure Deployment (`deploy.ps1`)
 Deploys the base infrastructure, Key Vault, Storage Account, Web App, Certificate Order, and Application Gateway with an HTTP port 80 listener:
 
 ```powershell
@@ -56,7 +57,7 @@ Deploys the base infrastructure, Key Vault, Storage Account, Web App, Certificat
 ### Manual Step: DNS Configuration
 Ensure your custom domain or subdomain (e.g. `cert-test.peterwynroberts.com`) has a DNS `CNAME` or `A` record pointing to the Application Gateway Public IP address so that GoDaddy's HTTP crawler reaches the gateway.
 
-### Step 3: Second Deployment to Bind Certificate (`deploy.ps1`)
+### Second Deployment to Bind Certificate (`deploy.ps1`)
 Once GoDaddy validates the domain and issues the certificate into Key Vault, re-run `deploy.ps1` with the Key Vault secret name obtained in Step 2:
 
 ```powershell
@@ -74,7 +75,7 @@ This script executes quickly without any blocking polling loops. It is designed 
 ./sync-validation-token.ps1 -ResourceGroupName "rg-agwcert"
 ```
 
-This is done automatically as part of the site deployment on 1st run.
+The token sync is done automatically as part of the static site deployment on 1st run.
 
 ---
 
